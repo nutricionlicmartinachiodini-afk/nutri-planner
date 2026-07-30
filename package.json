@@ -1,0 +1,29 @@
+{
+  "name": "nutri-planner",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Aplicacion para automatizar la creacion de planes nutricionales - Etapa 1 (dominio + importador Excel)",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "test:import": "ts-node --compiler-options '{\"module\":\"commonjs\"}' scripts/test-import.ts"
+  },
+  "dependencies": {
+    "next": "14.2.5",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "tsconfig-paths": "^4.2.0",
+    "uuid": "^9.0.1",
+    "xlsx": "^0.18.5",
+    "zod": "3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.11",
+    "@types/react": "18.3.3",
+    "@types/uuid": "^9.0.8",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.5.4",
+    "@types/react-dom": "18.3.0"
+  }
+}
