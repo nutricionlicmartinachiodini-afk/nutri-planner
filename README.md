@@ -1,12 +1,15 @@
-# nutri-planner — Etapa 1 (primer avance)
+# nutri-planner — Etapa 1 + primer paso de Etapa 2
 
 Automatiza la creación de planes nutricionales a partir del Excel de Martina.
-Este avance de la Etapa 1 incluye: **modelo de datos + importador del Excel
-con motor de validaciones**, probado de punta a punta contra el archivo real
-(`Sistema_Nutricional_CORREGIDO.xlsx`), y las pantallas de **Importar +
-Revisión** en Next.js. Todavía no hay persistencia en base de datos ni el
-resto de las pantallas (ficha del paciente, configuración de comidas, menú
-semanal, vista previa, exportar PDF) — eso es el siguiente paso.
+Incluye: **modelo de datos + importador del Excel con motor de
+validaciones**, probado de punta a punta contra el archivo real
+(`Sistema_Nutricional_CORREGIDO.xlsx`); las pantallas de **Importar +
+Revisión**; **persistencia real en Postgres** (Neon, vía integración de
+Vercel Storage); y la pantalla de **Pacientes + Ficha del paciente
+editable**. Al confirmar una importación, el paciente y sus opciones de
+comida quedan guardados en la base — no se pierden al recargar la página.
+Todavía faltan: configuración de comidas, menú semanal, vista previa y
+exportar PDF.
 
 ## Qué hay implementado
 
@@ -53,10 +56,15 @@ comida, y las advertencias agrupadas por severidad (bloqueante / advertencia
 alguna advertencia bloqueante sin marcar como revisada — asi se cumple la
 regla de "nunca completar silenciosamente".
 
-Nota: en esta version el flujo de importar + revisar vive en una sola
-pantalla y todo el estado es en memoria del navegador (no hay base de
-datos todavia). Al conectar Postgres, "Confirmar importacion" va a persistir
-el Patient + los MealOption reales en vez de solo mostrar un mensaje.
+Al hacer clic en "Confirmar importación" se guarda de verdad en Postgres:
+el paciente, sus opciones de comida y el catálogo de alimentos (que se
+actualiza por `id` estable en cada importación, sin duplicar). Desde
+"Pacientes" en el panel se puede ver la lista de pacientes guardados y
+editar la ficha de cada uno.
+
+Para correr el sitio localmente con persistencia hace falta la variable de
+entorno `POSTGRES_URL` (la genera automáticamente la integración de Neon en
+Vercel; se puede traer con `vercel env pull .env.local`).
 
 
 Esto corre el importador contra un Excel real y muestra en consola: los
@@ -82,13 +90,16 @@ exactamente lo que va a alimentar la futura pantalla de Revisión.
   cocción / sin medida casera" — coincide exactamente con lo detectado en el
   análisis original (7 de 27 sí lo tienen).
 
-## Qué falta para cerrar la Etapa 1
+## Qué falta para cerrar la Etapa 2
 
-1. Pantallas Next.js: ~~Importar + Revisión~~ **(hechas, ver abajo)**. Faltan:
-   Pacientes (listado), Ficha del paciente editable, Configuración de
-   comidas (unificar/separar + con/sin hidratos), Menú semanal manual, Vista
+1. Pantallas Next.js: ~~Importar + Revisión~~, ~~Pacientes (listado)~~,
+   ~~Ficha del paciente editable~~ **(hechas)**. Faltan: Configuración de
+   comidas (unificar/separar + con/sin hidratos), edición de las opciones de
+   comida (hoy son de solo lectura en la ficha), Menú semanal manual, Vista
    previa, Exportar PDF.
-2. Persistencia (Postgres) — hoy todo vive en memoria dentro de `PlanDraft`.
+2. ~~Persistencia (Postgres)~~ **(hecha: `src/lib/db.ts` + `src/lib/repository.ts`,
+   tablas `foods` / `patients` / `meal_options` / `import_warnings`, creadas
+   automáticamente la primera vez que se usan)**.
 3. Exportador a PDF (Playwright) sobre la plantilla visual basada en el HTML
    de ejemplo.
 4. Catálogo de alimentos editable (nombres alternativos, factor de cocción,

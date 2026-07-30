@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import Link from "next/link";
 import { PlanDraft, WarningSeverity } from "@/domain/types";
 
 const SEVERITY_LABEL: Record<WarningSeverity, string> = {
@@ -11,7 +12,9 @@ const SEVERITY_LABEL: Record<WarningSeverity, string> = {
 
 export function ReviewView({ draft }: { draft: PlanDraft }) {
   const [resolved, setResolved] = useState<Record<string, boolean>>({});
-  const [confirmed, setConfirmed] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [savedPatientId, setSavedPatientId] = useState<string | null>(null);
 
   const bloqueantes = draft.warnings.filter((w) => w.severity === "bloqueante");
   const advertencias = draft.warnings.filter((w) => w.severity === "advertencia");
@@ -30,16 +33,40 @@ export function ReviewView({ draft }: { draft: PlanDraft }) {
 
   const toggleResolved = (id: string) => setResolved((r) => ({ ...r, [id]: !r[id] }));
 
-  if (confirmed) {
+  async function handleConfirm() {
+    setSaving(true);
+    setSaveError(null);
+    try {
+      const resolvedWarningIds = Object.keys(resolved).filter((id) => resolved[id]);
+      const res = await fetch("/api/plan/confirm", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ draft, resolvedWarningIds }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setSaveError(data.error ?? "Error desconocido al guardar.");
+        return;
+      }
+      setSavedPatientId(data.patientId);
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (savedPatientId) {
     return (
       <div className="card">
-        <h2>Importacion confirmada</h2>
+        <h2>Importacion confirmada y guardada</h2>
         <p>
-          El borrador quedo listo para continuar. En esta version todavia no hay
-          persistencia en base de datos, asi que el siguiente paso (ficha del
-          paciente, configuracion de comidas, vista previa) se conecta en la
-          proxima etapa.
+          El paciente y sus opciones de comida quedaron guardados en la base de
+          datos: no se pierden si recargas la pagina o cerras el navegador.
         </p>
+        <Link href={`/pacientes/${savedPatientId}`}>
+          <button className="primary">Ver ficha del paciente</button>
+        </Link>
       </div>
     );
   }
@@ -121,14 +148,15 @@ export function ReviewView({ draft }: { draft: PlanDraft }) {
       />
 
       <div className="card">
-        <button className="primary" disabled={!puedeConfirmar} onClick={() => setConfirmed(true)}>
-          Confirmar importacion
+        <button className="primary" disabled={!puedeConfirmar || saving} onClick={handleConfirm}>
+          {saving ? "Guardando..." : "Confirmar importacion"}
         </button>
         {!puedeConfirmar && (
           <p style={{ color: "var(--error)", fontSize: 13 }}>
             Quedan {bloqueantesPendientes.length} advertencia(s) bloqueante(s) sin marcar como revisadas.
           </p>
         )}
+        {saveError && <p style={{ color: "var(--error)", fontSize: 13 }}>{saveError}</p>}
       </div>
     </div>
   );

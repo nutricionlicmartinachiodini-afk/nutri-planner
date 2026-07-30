@@ -4,7 +4,7 @@ export default function HomePage() {
   return (
     <div className="container">
       <h1>Panel</h1>
-      <p>Primer avance de la Etapa 1: importar un Excel y revisarlo antes de continuar.</p>
+      <p>Importar un Excel, revisarlo y guardar pacientes con persistencia real en base de datos.</p>
       <div className="card">
         <h2>Importar paciente</h2>
         <p>Subi el Excel del sistema nutricional para generar el borrador del plan y revisarlo.</p>
@@ -13,8 +13,15 @@ export default function HomePage() {
         </Link>
       </div>
       <div className="card">
+        <h2>Pacientes</h2>
+        <p>Ver y editar la ficha de pacientes ya guardados.</p>
+        <Link href="/pacientes">
+          <button className="secondary">Ver pacientes</button>
+        </Link>
+      </div>
+      <div className="card">
         <h3>Todavia no implementado en esta version</h3>
-        <p>Ficha del paciente editable, configuracion de comidas, menu semanal, vista previa y exportacion a PDF. Ver README.md.</p>
+        <p>Configuracion de comidas, menu semanal, vista previa y exportacion a PDF. Ver README.md.</p>
       </div>
     </div>
   );
