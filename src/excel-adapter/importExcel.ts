@@ -36,7 +36,7 @@ export function importExcelFile(buffer: Buffer | ArrayBuffer): PlanDraft {
 
   const anamnesis = parseAnamnesis(wb.Sheets["Anamnesis"]!, warnings);
   const activityLevels = wb.Sheets["Referencia"] ? parseReferencia(wb.Sheets["Referencia"]) : [];
-  const activityLevel = activityLevels.find((l) => l.label === anamnesis.activityLevelLabel);
+  const activityLevel = matchActivityLevel(anamnesis.activityLevelLabel, activityLevels);
   if (anamnesis.activityLevelLabel && !activityLevel) {
     warnings.push({
       id: "warn_nivel_actividad_no_encontrado",
@@ -59,7 +59,11 @@ export function importExcelFile(buffer: Buffer | ArrayBuffer): PlanDraft {
     weight: anamnesis.weight ?? undefined,
     consultDate: anamnesis.consultDate ?? undefined,
     goal: anamnesis.goal ?? undefined,
-    activityLevel: anamnesis.activityLevelLabel ?? undefined,
+    // Si matcheo (exacto o por prefijo antes de ":"), guardamos la categoria
+    // limpia ("Ligero") en vez del texto crudo del desplegable, para que se
+    // vea bien en la ficha y en el futuro PDF. Si no matcheo ninguna, dejamos
+    // el texto tal cual vino (nunca lo inventamos ni lo recortamos a ciegas).
+    activityLevel: activityLevel?.label ?? anamnesis.activityLevelLabel ?? undefined,
     activityFactor: activityLevel?.factor,
   };
 
@@ -81,4 +85,24 @@ export function importExcelFile(buffer: Buffer | ArrayBuffer): PlanDraft {
 
 function withImportId(warnings: ImportWarning[], importId: string): ImportWarning[] {
   return warnings.map((w) => ({ ...w, importId }));
+}
+
+/** El desplegable de "Nivel de actividad fisica" en Anamnesis puede guardar
+ * solo la categoria ("Ligero") o la categoria + el criterio completo
+ * concatenados ("Ligero: Ejercicio ligero 1-3 dias/semana..."), segun como
+ * este armada la lista de opciones en el Excel de origen. Probamos match
+ * exacto primero y, si falla, tratamos todo lo que esta antes de ":" como la
+ * categoria real. Nunca inventamos un valor si ninguna de las dos formas
+ * matchea - en ese caso queda como advertencia, igual que antes.
+ */
+function matchActivityLevel(
+  label: string | null,
+  levels: { label: string; factor: number; criterio: string }[]
+) {
+  if (!label) return undefined;
+  const exact = levels.find((l) => l.label === label);
+  if (exact) return exact;
+  const prefix = label.split(":")[0]?.trim();
+  if (!prefix) return undefined;
+  return levels.find((l) => l.label === prefix);
 }

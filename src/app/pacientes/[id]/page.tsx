@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
+import Link from "next/link";
 import { Goal, MealOption, Patient, Sex } from "@/domain/types";
 
 const SEX_OPTIONS: Sex[] = ["Masculino", "Femenino"];
@@ -119,6 +120,14 @@ export default function FichaPacientePage() {
   return (
     <div className="container">
       <h1>Ficha del paciente</h1>
+
+      {!loading && !loadError && (
+        <p>
+          <Link href={`/pacientes/${id}/comidas`}>
+            <button className="secondary">Configurar comidas &rarr;</button>
+          </Link>
+        </p>
+      )}
 
       {loading && <p>Cargando...</p>}
       {loadError && (

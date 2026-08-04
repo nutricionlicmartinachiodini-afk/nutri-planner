@@ -94,13 +94,23 @@ export async function confirmImport(
   await upsertFoods(draft.foods);
 
   const p = draft.patient;
-  if (
-    !p.firstName || !p.lastName || !p.sex || !p.consultDate ||
-    p.height == null || p.weight == null || !p.activityLevel ||
-    p.activityFactor == null || !p.goal
-  ) {
+  const faltantes: string[] = [];
+  if (!p.firstName) faltantes.push("nombre");
+  if (!p.lastName) faltantes.push("apellido");
+  if (!p.sex) faltantes.push("sexo");
+  if (!p.consultDate) faltantes.push("fecha de consulta");
+  if (p.height == null) faltantes.push("talla");
+  if (p.weight == null) faltantes.push("peso");
+  if (!p.goal) faltantes.push("objetivo");
+  if (!p.activityLevel) faltantes.push("nivel de actividad");
+  else if (p.activityFactor == null) {
+    faltantes.push(
+      `factor de actividad (el nivel de actividad "${p.activityLevel}" no coincide con ninguno de los 5 valores de la hoja Referencia; revisalo en la ficha o corregi el desplegable en el Excel)`
+    );
+  }
+  if (faltantes.length > 0) {
     throw new Error(
-      "Faltan datos obligatorios del paciente (nombre, apellido, sexo, fecha de consulta, talla, peso, nivel de actividad u objetivo). No se puede confirmar la importacion."
+      `Faltan datos obligatorios del paciente: ${faltantes.join(", ")}. No se puede confirmar la importacion.`
     );
   }
 
@@ -253,4 +263,101 @@ export async function updatePatient(id: string, fields: PatientEditableFields): 
       fields.activityFactor, fields.goal, fields.objectivesText, fields.indicationsText,
     ]
   );
+}
+
+export interface MealConfigOverrideRow {
+  unifyBreakfastSnackManualOverride: boolean | null;
+  unifyLunchDinnerManualOverride: boolean | null;
+  lunchHasCarbs: boolean | null;
+  dinnerHasCarbs: boolean | null;
+}
+
+export async function getMealConfigOverride(patientId: string): Promise<MealConfigOverrideRow | null> {
+  await ensureSchema();
+  const res = await getPool().query(`SELECT * FROM meal_configs WHERE patient_id = $1`, [patientId]);
+  const row = res.rows[0];
+  if (!row) return null;
+  return {
+    unifyBreakfastSnackManualOverride: row.unify_breakfast_snack_override,
+    unifyLunchDinnerManualOverride: row.unify_lunch_dinner_override,
+    lunchHasCarbs: row.lunch_has_carbs,
+    dinnerHasCarbs: row.dinner_has_carbs,
+  };
+}
+
+export async function saveMealConfigOverride(patientId: string, override: MealConfigOverrideRow): Promise<void> {
+  await ensureSchema();
+  await getPool().query(
+    `INSERT INTO meal_configs (patient_id, unify_breakfast_snack_override, unify_lunch_dinner_override, lunch_has_carbs, dinner_has_carbs, updated_at)
+     VALUES ($1,$2,$3,$4,$5, now())
+     ON CONFLICT (patient_id) DO UPDATE SET
+       unify_breakfast_snack_override = EXCLUDED.unify_breakfast_snack_override,
+       unify_lunch_dinner_override = EXCLUDED.unify_lunch_dinner_override,
+       lunch_has_carbs = EXCLUDED.lunch_has_carbs,
+       dinner_has_carbs = EXCLUDED.dinner_has_carbs,
+       updated_at = now()`,
+    [
+      patientId,
+      override.unifyBreakfastSnackManualOverride,
+      override.unifyLunchDinnerManualOverride,
+      override.lunchHasCarbs,
+      override.dinnerHasCarbs,
+    ]
+  );
+}
+
+export interface WeeklyMenuCellData {
+  day: number;
+  mealType: string;
+  freeText: string;
+}
+
+export interface WeeklyMenuData {
+  daysCount: 5 | 7;
+  cells: WeeklyMenuCellData[];
+}
+
+export async function getWeeklyMenu(patientId: string): Promise<WeeklyMenuData> {
+  await ensureSchema();
+  const pool = getPool();
+  const headerRes = await pool.query(`SELECT days_count FROM weekly_menus WHERE patient_id = $1`, [patientId]);
+  const daysCount = (headerRes.rows[0]?.days_count as 5 | 7 | undefined) ?? 5;
+  const cellsRes = await pool.query(
+    `SELECT day, meal_type, free_text FROM weekly_menu_cells WHERE patient_id = $1`,
+    [patientId]
+  );
+  const cells: WeeklyMenuCellData[] = cellsRes.rows.map((r) => ({
+    day: r.day,
+    mealType: r.meal_type,
+    freeText: r.free_text,
+  }));
+  return { daysCount, cells };
+}
+
+export async function saveWeeklyMenu(patientId: string, data: WeeklyMenuData): Promise<void> {
+  await ensureSchema();
+  const pool = getPool();
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(
+      `INSERT INTO weekly_menus (patient_id, days_count, updated_at) VALUES ($1,$2, now())
+       ON CONFLICT (patient_id) DO UPDATE SET days_count = EXCLUDED.days_count, updated_at = now()`,
+      [patientId, data.daysCount]
+    );
+    await client.query(`DELETE FROM weekly_menu_cells WHERE patient_id = $1`, [patientId]);
+    for (const cell of data.cells) {
+      if (!cell.freeText || !cell.freeText.trim()) continue;
+      await client.query(
+        `INSERT INTO weekly_menu_cells (id, patient_id, day, meal_type, free_text) VALUES ($1,$2,$3,$4,$5)`,
+        [uuidv4(), patientId, cell.day, cell.mealType, cell.freeText]
+      );
+    }
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
 }

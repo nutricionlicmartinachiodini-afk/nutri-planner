@@ -136,6 +136,33 @@ export async function ensureSchema(): Promise<void> {
     );
 
     CREATE INDEX IF NOT EXISTS idx_warnings_patient ON import_warnings(patient_id);
+
+    CREATE TABLE IF NOT EXISTS meal_configs (
+      patient_id TEXT PRIMARY KEY REFERENCES patients(id) ON DELETE CASCADE,
+      unify_breakfast_snack_override BOOLEAN,
+      unify_lunch_dinner_override BOOLEAN,
+      lunch_has_carbs BOOLEAN,
+      dinner_has_carbs BOOLEAN,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+
+    CREATE TABLE IF NOT EXISTS weekly_menus (
+      patient_id TEXT PRIMARY KEY REFERENCES patients(id) ON DELETE CASCADE,
+      days_count INTEGER NOT NULL DEFAULT 5,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+
+    CREATE TABLE IF NOT EXISTS weekly_menu_cells (
+      id TEXT PRIMARY KEY,
+      patient_id TEXT NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+      day INTEGER NOT NULL,
+      meal_type TEXT NOT NULL,
+      free_text TEXT NOT NULL DEFAULT '',
+      recipe_id TEXT,
+      UNIQUE(patient_id, day, meal_type)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_weekly_menu_cells_patient ON weekly_menu_cells(patient_id);
   `);
   schemaEnsured = true;
 }
