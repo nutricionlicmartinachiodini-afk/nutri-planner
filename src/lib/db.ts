@@ -177,5 +177,14 @@ export async function ensureSchema(): Promise<void> {
       PRIMARY KEY (patient_id, meal_type, option_number)
     );
   `);
+
+  // Migracion para bases ya existentes: weekly_menu_cells se creo en un
+  // deploy anterior sin esta columna. "CREATE TABLE IF NOT EXISTS" no toca
+  // tablas que ya existen, asi que las columnas nuevas necesitan su propio
+  // ALTER TABLE ... ADD COLUMN IF NOT EXISTS (tambien idempotente).
+  await pool.query(`
+    ALTER TABLE weekly_menu_cells ADD COLUMN IF NOT EXISTS selected_option_number INTEGER;
+  `);
+
   schemaEnsured = true;
 }
