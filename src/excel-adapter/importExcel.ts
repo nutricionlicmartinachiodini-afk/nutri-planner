@@ -6,6 +6,7 @@ import { parseAnamnesis } from "./anamnesisParser";
 import { parseReferencia } from "./referenciaParser";
 import { parseDesayunoMerienda } from "./desayunoMeriendaParser";
 import { parseAlmuerzoCena } from "./almuerzoCenaParser";
+import { parsePlanTextos } from "./planTextosParser";
 
 /** Punto de entrada del importador. Devuelve un PlanDraft en memoria - nada se
  * persiste todavia. La pantalla de Revision es la que decide si se confirma. */
@@ -36,6 +37,22 @@ export function importExcelFile(buffer: Buffer | ArrayBuffer): PlanDraft {
 
   const anamnesis = parseAnamnesis(wb.Sheets["Anamnesis"]!, warnings);
   const activityLevels = wb.Sheets["Referencia"] ? parseReferencia(wb.Sheets["Referencia"]) : [];
+
+  // "Plan - textos" es opcional (hojas de Excel viejas pueden no tenerla):
+  // si falta, no bloqueamos la importacion, solo avisamos para que Martina
+  // sepa que tiene que escribir los objetivos a mano en la ficha.
+  const planTextosSheet = wb.Sheets["Plan - textos"];
+  const planTextos = planTextosSheet ? parsePlanTextos(planTextosSheet) : null;
+  if (!planTextosSheet) {
+    warnings.push({
+      id: "info_plan_textos_sin_hoja",
+      importId: "",
+      severity: "info",
+      sheet: "Plan - textos",
+      message: 'No se encontro la hoja "Plan - textos" en este Excel: los objetivos e indicaciones hay que cargarlos a mano en la ficha del paciente.',
+      resolved: false,
+    });
+  }
   const activityLevel = matchActivityLevel(anamnesis.activityLevelLabel, activityLevels);
   if (anamnesis.activityLevelLabel && !activityLevel) {
     warnings.push({
@@ -65,6 +82,11 @@ export function importExcelFile(buffer: Buffer | ArrayBuffer): PlanDraft {
     // el texto tal cual vino (nunca lo inventamos ni lo recortamos a ciegas).
     activityLevel: activityLevel?.label ?? anamnesis.activityLevelLabel ?? undefined,
     activityFactor: activityLevel?.factor,
+    // Lo unico que Martina escribe a mano por paciente en el Excel (hoja
+    // "Plan - textos"): si esta cargado, se lo llevamos ya escrito a la
+    // ficha en vez de pedirselo de nuevo.
+    objectivesText: planTextos?.objectivesText ?? undefined,
+    indicationsText: planTextos?.indicationsText ?? undefined,
   };
 
   const calculosWs = wb.Sheets["Calculos"]!;

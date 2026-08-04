@@ -103,25 +103,21 @@ export function parseDesayunoMerienda(
         return;
       }
 
-      let foodRowCount = 0;
+      let namedRowCount = 0; // filas con nombre de alimento cargado, tenga o no cantidad
+      let foodRowCount = 0; // filas efectivamente incluidas en el plan (con cantidad cargada)
       for (let row = block.headerRow + 1; row < block.totalRow; row++) {
         const name = cellStr(ws, `A${row}`);
         if (!name) continue;
+        namedRowCount++;
+
+        // Si la cantidad esta en blanco, Martina no quiere ese alimento en
+        // esta opcion del plan de este paciente: se omite en silencio, no es
+        // un error. (Antes esto generaba un bloqueante incorrecto.)
+        const quantity = cellNum(ws, `D${row}`);
+        if (quantity === null) continue;
         foodRowCount++;
 
         const food = matchFood(name, foods, mealType, row, warnings);
-        const quantity = cellNum(ws, `D${row}`);
-        if (quantity === null) {
-          warnings.push({
-            id: `warn_${mealType}_opcion_${block.optionNumber}_cantidad_${row}`,
-            importId: "",
-            severity: "bloqueante",
-            sheet: "Calculos",
-            cellRef: `D${row}`,
-            message: `"${name}" (opcion ${block.optionNumber} de ${mealType}) no tiene una cantidad numerica cargada.`,
-            resolved: false,
-          });
-        }
 
         if (food) {
           if (food.dataStatus === "incompleto") {
@@ -164,7 +160,7 @@ export function parseDesayunoMerienda(
           optionNumber: block.optionNumber,
           category: null,
           foodId: food?.id ?? `__no_match__${row}`,
-          quantity: quantity ?? 0,
+          quantity,
           unit: cellStr(ws, `C${row}`) ?? "",
           cookedQuantity: null, // Desayuno/Merienda no maneja peso cocido en el Excel actual
           homemadeMeasureText: null,
@@ -176,14 +172,28 @@ export function parseDesayunoMerienda(
       }
 
       if (foodRowCount === 0) {
-        warnings.push({
-          id: `warn_${mealType}_opcion_${block.optionNumber}_vacia`,
-          importId: "",
-          severity: "advertencia",
-          sheet: "Calculos",
-          message: `La opcion ${block.optionNumber} de ${mealType} no tiene ningun alimento cargado.`,
-          resolved: false,
-        });
+        if (namedRowCount > 0) {
+          // Habia alimentos nombrados pero ninguno con cantidad cargada:
+          // Martina dejo la opcion entera sin completar a proposito, no va en
+          // el plan de este paciente. Es esperado, no es un error.
+          warnings.push({
+            id: `warn_${mealType}_opcion_${block.optionNumber}_sin_cantidades`,
+            importId: "",
+            severity: "info",
+            sheet: "Calculos",
+            message: `La opcion ${block.optionNumber} de ${mealType} no tiene cantidades cargadas en ningun alimento: se omite del plan de este paciente.`,
+            resolved: false,
+          });
+        } else {
+          warnings.push({
+            id: `warn_${mealType}_opcion_${block.optionNumber}_vacia`,
+            importId: "",
+            severity: "advertencia",
+            sheet: "Calculos",
+            message: `La opcion ${block.optionNumber} de ${mealType} no tiene ningun alimento cargado.`,
+            resolved: false,
+          });
+        }
       }
     });
   });

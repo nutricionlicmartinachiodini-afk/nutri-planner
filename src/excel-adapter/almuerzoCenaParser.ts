@@ -110,10 +110,20 @@ function parseSection(
     return;
   }
 
-  let rowCount = 0;
+  let namedRowCount = 0; // filas con nombre de alimento cargado, tenga o no cantidad
+  let rowCount = 0; // filas efectivamente incluidas en el plan (con cantidad cargada)
   for (let row = headerRow + 1; row < endRow; row++) {
     const name = cellStr(ws, `A${row}`);
     if (!name) continue;
+    namedRowCount++;
+
+    // Si la cantidad esta en blanco, ese alimento no forma parte del plan de
+    // este paciente en esta comida: se omite en silencio (no es un error, ni
+    // se valida categoria/catalogo de algo que no se va a usar).
+    const quantity = cellNum(ws, `D${row}`);
+    if (quantity === null) continue;
+    rowCount++;
+
     const categoryRaw = cellStr(ws, `B${row}`);
     const category = categoryRaw ? CATEGORY_MAP[categoryRaw.toUpperCase()] ?? null : null;
     if (!category) {
@@ -127,7 +137,6 @@ function parseSection(
         resolved: false,
       });
     }
-    rowCount++;
 
     const target = normalizeText(name);
     let food = foods.find((f) => normalizeText(f.name) === target) ?? null;
@@ -164,7 +173,6 @@ function parseSection(
       });
     }
 
-    const quantity = cellNum(ws, `D${row}`);
     const cookedQuantity = food?.cookingFactor ? cellNum(ws, `J${row}`) : null; // nunca se inventa si no hay factor
     const homemadeMeasureText = food?.homemadeMeasureUnit || category === "vegetales" ? cellStr(ws, `K${row}`) : null;
 
@@ -175,7 +183,7 @@ function parseSection(
       optionNumber: null,
       category,
       foodId: food?.id ?? `__no_match__${row}`,
-      quantity: quantity ?? 0,
+      quantity,
       unit: cellStr(ws, `C${row}`) ?? "",
       cookedQuantity,
       homemadeMeasureText,
@@ -187,13 +195,24 @@ function parseSection(
   }
 
   if (rowCount === 0) {
-    warnings.push({
-      id: `warn_${mealType}_vacio`,
-      importId: "",
-      severity: "advertencia",
-      sheet: "Calculos",
-      message: `No se encontro ningun alimento en la seccion de ${mealType}.`,
-      resolved: false,
-    });
+    if (namedRowCount > 0) {
+      warnings.push({
+        id: `warn_${mealType}_sin_cantidades`,
+        importId: "",
+        severity: "info",
+        sheet: "Calculos",
+        message: `La seccion de ${mealType} no tiene cantidades cargadas en ningun alimento: se omite del plan de este paciente.`,
+        resolved: false,
+      });
+    } else {
+      warnings.push({
+        id: `warn_${mealType}_vacio`,
+        importId: "",
+        severity: "advertencia",
+        sheet: "Calculos",
+        message: `No se encontro ningun alimento en la seccion de ${mealType}.`,
+        resolved: false,
+      });
+    }
   }
 }

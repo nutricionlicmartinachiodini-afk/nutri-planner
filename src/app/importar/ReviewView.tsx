@@ -107,6 +107,8 @@ export function ReviewView({ draft }: { draft: PlanDraft }) {
             <tr><td>Peso (kg)</td><td>{draft.patient.weight ?? faltante()}</td></tr>
             <tr><td>Objetivo</td><td>{draft.patient.goal ?? faltante()}</td></tr>
             <tr><td>Nivel de actividad</td><td>{draft.patient.activityLevel ?? faltante()}</td></tr>
+            <tr><td>Objetivos (Plan - textos)</td><td>{textoStatus(draft.patient.objectivesText)}</td></tr>
+            <tr><td>Indicaciones (Plan - textos)</td><td>{textoStatus(draft.patient.indicationsText)}</td></tr>
           </tbody>
         </table>
       </div>
@@ -168,6 +170,10 @@ function fmt(a?: string, b?: string) {
 }
 function faltante() {
   return <span style={{ color: "var(--error)" }}>falta cargar</span>;
+}
+function textoStatus(text?: string | null) {
+  if (!text) return <span style={{ color: "var(--muted, #888)" }}>vacio (se completa a mano en la ficha)</span>;
+  return <span>encontrado ({text.length} caracteres)</span>;
 }
 
 function WarningGroup({
