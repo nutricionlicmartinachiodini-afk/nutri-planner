@@ -4,14 +4,42 @@ import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 
-const MEAL_TYPES: { key: string; label: string }[] = [
-  { key: "desayuno", label: "Desayuno" },
-  { key: "merienda", label: "Merienda" },
-  { key: "almuerzo", label: "Almuerzo" },
-  { key: "cena", label: "Cena" },
+const MEAL_TYPES: { key: string; label: string; hasOptions: boolean }[] = [
+  { key: "desayuno", label: "Desayuno", hasOptions: true },
+  { key: "merienda", label: "Merienda", hasOptions: true },
+  { key: "almuerzo", label: "Almuerzo", hasOptions: false },
+  { key: "cena", label: "Cena", hasOptions: false },
 ];
 
-type Grid = Record<string, Record<number, string>>; // mealType -> day -> texto
+interface MealOptionItem {
+  foodName: string;
+  quantity: number;
+  unit: string;
+}
+
+interface MealOptionNameEntry {
+  optionNumber: number;
+  autoName: string;
+  manualName: string | null;
+  resolvedName: string;
+  items: MealOptionItem[];
+}
+
+interface MealOptionNamesResponse {
+  desayuno: MealOptionNameEntry[];
+  merienda: MealOptionNameEntry[];
+}
+
+interface CellState {
+  freeText: string;
+  selectedOptionNumber: number | null;
+}
+
+type Grid = Record<string, Record<number, CellState>>; // mealType -> day -> celda
+
+function emptyCell(): CellState {
+  return { freeText: "", selectedOptionNumber: null };
+}
 
 export default function MenuSemanalPage() {
   const params = useParams<{ id: string }>();
@@ -19,6 +47,7 @@ export default function MenuSemanalPage() {
 
   const [daysCount, setDaysCount] = useState<5 | 7>(5);
   const [grid, setGrid] = useState<Grid>({});
+  const [names, setNames] = useState<MealOptionNamesResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -28,20 +57,37 @@ export default function MenuSemanalPage() {
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    fetch(`/api/patients/${id}/weekly-menu`)
-      .then(async (res) => {
+    Promise.all([
+      fetch(`/api/patients/${id}/weekly-menu`).then(async (res) => {
         const d = await res.json();
-        if (!res.ok) throw new Error(d.error ?? "Error desconocido.");
-        if (!cancelled) {
-          setDaysCount(d.daysCount);
-          const g: Grid = {};
-          for (const mt of MEAL_TYPES) g[mt.key] = {};
-          for (const cell of d.cells as { day: number; mealType: string; freeText: string }[]) {
-            if (!g[cell.mealType]) g[cell.mealType] = {};
-            g[cell.mealType]![cell.day] = cell.freeText;
-          }
-          setGrid(g);
+        if (!res.ok) throw new Error(d.error ?? "Error desconocido al leer el menu semanal.");
+        return d;
+      }),
+      fetch(`/api/patients/${id}/meal-option-names`).then(async (res) => {
+        const d = await res.json();
+        if (!res.ok) throw new Error(d.error ?? "Error desconocido al leer los nombres de las preparaciones.");
+        return d as MealOptionNamesResponse;
+      }),
+    ])
+      .then(([menuData, namesData]) => {
+        if (cancelled) return;
+        setNames(namesData);
+        setDaysCount(menuData.daysCount);
+        const g: Grid = {};
+        for (const mt of MEAL_TYPES) g[mt.key] = {};
+        for (const cell of menuData.cells as {
+          day: number;
+          mealType: string;
+          freeText: string;
+          selectedOptionNumber: number | null;
+        }[]) {
+          if (!g[cell.mealType]) g[cell.mealType] = {};
+          g[cell.mealType]![cell.day] = {
+            freeText: cell.freeText ?? "",
+            selectedOptionNumber: cell.selectedOptionNumber ?? null,
+          };
         }
+        setGrid(g);
       })
       .catch((err) => !cancelled && setLoadError(err instanceof Error ? err.message : String(err)))
       .finally(() => !cancelled && setLoading(false));
@@ -50,8 +96,11 @@ export default function MenuSemanalPage() {
     };
   }, [id]);
 
-  function updateCell(mealType: string, day: number, value: string) {
-    setGrid((g) => ({ ...g, [mealType]: { ...(g[mealType] ?? {}), [day]: value } }));
+  function updateCell(mealType: string, day: number, patch: Partial<CellState>) {
+    setGrid((g) => {
+      const current = g[mealType]?.[day] ?? emptyCell();
+      return { ...g, [mealType]: { ...(g[mealType] ?? {}), [day]: { ...current, ...patch } } };
+    });
     setSaved(false);
   }
 
@@ -59,11 +108,13 @@ export default function MenuSemanalPage() {
     setSaving(true);
     setSaveError(null);
     try {
-      const cells: { day: number; mealType: string; freeText: string }[] = [];
+      const cells: { day: number; mealType: string; freeText: string; selectedOptionNumber: number | null }[] = [];
       for (const mt of MEAL_TYPES) {
         for (let day = 1; day <= daysCount; day++) {
-          const freeText = grid[mt.key]?.[day] ?? "";
-          if (freeText.trim()) cells.push({ day, mealType: mt.key, freeText });
+          const cell = grid[mt.key]?.[day];
+          if (!cell) continue;
+          if (!cell.freeText.trim() && cell.selectedOptionNumber === null) continue;
+          cells.push({ day, mealType: mt.key, freeText: cell.freeText, selectedOptionNumber: cell.selectedOptionNumber });
         }
       }
       const res = await fetch(`/api/patients/${id}/weekly-menu`, {
@@ -82,6 +133,13 @@ export default function MenuSemanalPage() {
   }
 
   const days = Array.from({ length: daysCount }, (_, i) => i + 1);
+
+  function optionsFor(mealType: string): MealOptionNameEntry[] {
+    if (!names) return [];
+    if (mealType === "desayuno") return names.desayuno;
+    if (mealType === "merienda") return names.merienda;
+    return [];
+  }
 
   return (
     <div className="container" style={{ maxWidth: 1100 }}>
@@ -113,6 +171,11 @@ export default function MenuSemanalPage() {
                 <option value={7}>7 días</option>
               </select>
             </div>
+            <p style={{ fontSize: 13, color: "#555", margin: "8px 0 0" }}>
+              Desayuno y Merienda: elegís la opción importada del Excel para cada día (podés
+              ponerle nombre a cada una desde Configuración de comidas). Almuerzo y Cena
+              siguen siendo texto libre por ahora.
+            </p>
           </div>
 
           <div className="card" style={{ overflowX: "auto" }}>
@@ -128,17 +191,49 @@ export default function MenuSemanalPage() {
               <tbody>
                 {MEAL_TYPES.map((mt) => (
                   <tr key={mt.key}>
-                    <td style={{ fontWeight: "bold", whiteSpace: "nowrap" }}>{mt.label}</td>
-                    {days.map((d) => (
-                      <td key={d} style={{ minWidth: 160 }}>
-                        <input
-                          style={{ width: "100%", padding: "6px 8px", border: "1px solid #ccc", borderRadius: 4, fontSize: 13 }}
-                          value={grid[mt.key]?.[d] ?? ""}
-                          onChange={(e) => updateCell(mt.key, d, e.target.value)}
-                          placeholder="Texto libre"
-                        />
-                      </td>
-                    ))}
+                    <td style={{ fontWeight: "bold", whiteSpace: "nowrap", verticalAlign: "top" }}>{mt.label}</td>
+                    {days.map((d) => {
+                      const cell = grid[mt.key]?.[d] ?? emptyCell();
+                      if (!mt.hasOptions) {
+                        return (
+                          <td key={d} style={{ minWidth: 160, verticalAlign: "top" }}>
+                            <input
+                              style={{ width: "100%", padding: "6px 8px", border: "1px solid #ccc", borderRadius: 4, fontSize: 13 }}
+                              value={cell.freeText}
+                              onChange={(e) => updateCell(mt.key, d, { freeText: e.target.value })}
+                              placeholder="Texto libre"
+                            />
+                          </td>
+                        );
+                      }
+                      const options = optionsFor(mt.key);
+                      const selected = options.find((o) => o.optionNumber === cell.selectedOptionNumber);
+                      return (
+                        <td key={d} style={{ minWidth: 200, verticalAlign: "top" }}>
+                          <select
+                            style={{ width: "100%", padding: "6px 8px", border: "1px solid #ccc", borderRadius: 4, fontSize: 13 }}
+                            value={cell.selectedOptionNumber ?? ""}
+                            onChange={(e) =>
+                              updateCell(mt.key, d, {
+                                selectedOptionNumber: e.target.value === "" ? null : Number(e.target.value),
+                              })
+                            }
+                          >
+                            <option value="">— sin elegir —</option>
+                            {options.map((o) => (
+                              <option key={o.optionNumber} value={o.optionNumber}>
+                                {o.resolvedName}
+                              </option>
+                            ))}
+                          </select>
+                          {selected && (
+                            <p style={{ fontSize: 11, color: "#777", margin: "4px 0 0" }}>
+                              {selected.items.map((it) => `${it.foodName} ${it.quantity} ${it.unit}`).join(" · ")}
+                            </p>
+                          )}
+                        </td>
+                      );
+                    })}
                   </tr>
                 ))}
               </tbody>

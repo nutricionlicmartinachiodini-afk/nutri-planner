@@ -158,11 +158,24 @@ export async function ensureSchema(): Promise<void> {
       day INTEGER NOT NULL,
       meal_type TEXT NOT NULL,
       free_text TEXT NOT NULL DEFAULT '',
+      selected_option_number INTEGER,
       recipe_id TEXT,
       UNIQUE(patient_id, day, meal_type)
     );
 
     CREATE INDEX IF NOT EXISTS idx_weekly_menu_cells_patient ON weekly_menu_cells(patient_id);
+
+    -- Nombre "lindo" de cada opcion de Desayuno/Merienda (ej. "Infusion con
+    -- leche + tostada con queso y fruta") para reemplazar el generico
+    -- "Opcion N" en el menu semanal. Si no hay fila para una opcion, se usa
+    -- el nombre automatico armado con los alimentos (nunca queda sin nombre).
+    CREATE TABLE IF NOT EXISTS meal_option_labels (
+      patient_id TEXT NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+      meal_type TEXT NOT NULL,
+      option_number INTEGER NOT NULL,
+      name TEXT NOT NULL DEFAULT '',
+      PRIMARY KEY (patient_id, meal_type, option_number)
+    );
   `);
   schemaEnsured = true;
 }

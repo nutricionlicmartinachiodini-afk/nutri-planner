@@ -225,6 +225,7 @@ export async function getPatientFull(id: string): Promise<PatientFull | null> {
     computedCarbs: m.computed_carbs,
     computedProtein: m.computed_protein,
     computedFat: m.computed_fat,
+    foodNameSnapshot: m.food_name_snapshot,
   }));
 
   const warnRes = await pool.query(`SELECT * FROM import_warnings WHERE patient_id = $1`, [id]);
@@ -310,6 +311,7 @@ export interface WeeklyMenuCellData {
   day: number;
   mealType: string;
   freeText: string;
+  selectedOptionNumber: number | null;
 }
 
 export interface WeeklyMenuData {
@@ -323,13 +325,14 @@ export async function getWeeklyMenu(patientId: string): Promise<WeeklyMenuData> 
   const headerRes = await pool.query(`SELECT days_count FROM weekly_menus WHERE patient_id = $1`, [patientId]);
   const daysCount = (headerRes.rows[0]?.days_count as 5 | 7 | undefined) ?? 5;
   const cellsRes = await pool.query(
-    `SELECT day, meal_type, free_text FROM weekly_menu_cells WHERE patient_id = $1`,
+    `SELECT day, meal_type, free_text, selected_option_number FROM weekly_menu_cells WHERE patient_id = $1`,
     [patientId]
   );
   const cells: WeeklyMenuCellData[] = cellsRes.rows.map((r) => ({
     day: r.day,
     mealType: r.meal_type,
     freeText: r.free_text,
+    selectedOptionNumber: r.selected_option_number,
   }));
   return { daysCount, cells };
 }
@@ -347,11 +350,65 @@ export async function saveWeeklyMenu(patientId: string, data: WeeklyMenuData): P
     );
     await client.query(`DELETE FROM weekly_menu_cells WHERE patient_id = $1`, [patientId]);
     for (const cell of data.cells) {
-      if (!cell.freeText || !cell.freeText.trim()) continue;
+      const hasFreeText = cell.freeText && cell.freeText.trim();
+      const hasOption = cell.selectedOptionNumber !== null && cell.selectedOptionNumber !== undefined;
+      if (!hasFreeText && !hasOption) continue;
       await client.query(
-        `INSERT INTO weekly_menu_cells (id, patient_id, day, meal_type, free_text) VALUES ($1,$2,$3,$4,$5)`,
-        [uuidv4(), patientId, cell.day, cell.mealType, cell.freeText]
+        `INSERT INTO weekly_menu_cells (id, patient_id, day, meal_type, free_text, selected_option_number)
+         VALUES ($1,$2,$3,$4,$5,$6)`,
+        [uuidv4(), patientId, cell.day, cell.mealType, cell.freeText ?? "", cell.selectedOptionNumber ?? null]
       );
+    }
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+export interface MealOptionLabelRow {
+  mealType: string;
+  optionNumber: number;
+  name: string;
+}
+
+/** Nombres "lindos" de cada Opcion N de Desayuno/Merienda, editados a mano
+ * por Martina desde Configuracion de comidas. Si no hay fila para una
+ * opcion, el llamador debe usar el nombre automatico (union de alimentos):
+ * nunca se guarda un override vacio, se borra la fila (mismo patron que el
+ * resto de la app: null/ausente = automatico). */
+export async function getMealOptionLabels(patientId: string): Promise<MealOptionLabelRow[]> {
+  await ensureSchema();
+  const res = await getPool().query(
+    `SELECT meal_type, option_number, name FROM meal_option_labels WHERE patient_id = $1`,
+    [patientId]
+  );
+  return res.rows.map((r) => ({ mealType: r.meal_type, optionNumber: r.option_number, name: r.name }));
+}
+
+export async function saveMealOptionLabels(patientId: string, labels: MealOptionLabelRow[]): Promise<void> {
+  await ensureSchema();
+  const pool = getPool();
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    for (const l of labels) {
+      const trimmed = (l.name ?? "").trim();
+      if (trimmed) {
+        await client.query(
+          `INSERT INTO meal_option_labels (patient_id, meal_type, option_number, name)
+           VALUES ($1,$2,$3,$4)
+           ON CONFLICT (patient_id, meal_type, option_number) DO UPDATE SET name = EXCLUDED.name`,
+          [patientId, l.mealType, l.optionNumber, trimmed]
+        );
+      } else {
+        await client.query(
+          `DELETE FROM meal_option_labels WHERE patient_id = $1 AND meal_type = $2 AND option_number = $3`,
+          [patientId, l.mealType, l.optionNumber]
+        );
+      }
     }
     await client.query("COMMIT");
   } catch (err) {

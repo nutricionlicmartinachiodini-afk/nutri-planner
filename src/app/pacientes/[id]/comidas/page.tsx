@@ -17,6 +17,25 @@ interface MealConfigResolved {
   dinnerHasCarbs: boolean;
 }
 
+interface MealOptionItem {
+  foodName: string;
+  quantity: number;
+  unit: string;
+}
+
+interface MealOptionNameEntry {
+  optionNumber: number;
+  autoName: string;
+  manualName: string | null;
+  resolvedName: string;
+  items: MealOptionItem[];
+}
+
+interface MealOptionNamesResponse {
+  desayuno: MealOptionNameEntry[];
+  merienda: MealOptionNameEntry[];
+}
+
 type TriState = "auto" | "true" | "false";
 function toTriState(v: boolean | null): TriState {
   return v === null ? "auto" : v ? "true" : "false";
@@ -41,6 +60,14 @@ export default function ConfiguracionComidasPage() {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
 
+  const [names, setNames] = useState<MealOptionNamesResponse | null>(null);
+  const [nameEdits, setNameEdits] = useState<Record<string, string>>({}); // key `${mealType}_${optionNumber}` -> texto en el input
+  const [namesLoading, setNamesLoading] = useState(true);
+  const [namesLoadError, setNamesLoadError] = useState<string | null>(null);
+  const [namesSaving, setNamesSaving] = useState(false);
+  const [namesSaveError, setNamesSaveError] = useState<string | null>(null);
+  const [namesSaved, setNamesSaved] = useState(false);
+
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
@@ -58,6 +85,31 @@ export default function ConfiguracionComidasPage() {
       })
       .catch((err) => !cancelled && setLoadError(err instanceof Error ? err.message : String(err)))
       .finally(() => !cancelled && setLoading(false));
+    return () => {
+      cancelled = true;
+    };
+  }, [id]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setNamesLoading(true);
+    fetch(`/api/patients/${id}/meal-option-names`)
+      .then(async (res) => {
+        const d = await res.json();
+        if (!res.ok) throw new Error(d.error ?? "Error desconocido.");
+        if (!cancelled) {
+          setNames(d);
+          const edits: Record<string, string> = {};
+          for (const mt of ["desayuno", "merienda"] as const) {
+            for (const entry of d[mt] as MealOptionNameEntry[]) {
+              edits[`${mt}_${entry.optionNumber}`] = entry.manualName ?? entry.autoName;
+            }
+          }
+          setNameEdits(edits);
+        }
+      })
+      .catch((err) => !cancelled && setNamesLoadError(err instanceof Error ? err.message : String(err)))
+      .finally(() => !cancelled && setNamesLoading(false));
     return () => {
       cancelled = true;
     };
@@ -85,6 +137,37 @@ export default function ConfiguracionComidasPage() {
       setSaveError(err instanceof Error ? err.message : String(err));
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function handleSaveNames() {
+    if (!names) return;
+    setNamesSaving(true);
+    setNamesSaveError(null);
+    try {
+      const labels: { mealType: string; optionNumber: number; name: string }[] = [];
+      for (const mt of ["desayuno", "merienda"] as const) {
+        for (const entry of names[mt]) {
+          const edited = (nameEdits[`${mt}_${entry.optionNumber}`] ?? "").trim();
+          // Si lo que quedo escrito es exactamente el nombre automatico, no
+          // hace falta guardar un override - se borra (mismo patron auto/manual
+          // que el resto de la app).
+          labels.push({ mealType: mt, optionNumber: entry.optionNumber, name: edited === entry.autoName ? "" : edited });
+        }
+      }
+      const res = await fetch(`/api/patients/${id}/meal-option-names`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ labels }),
+      });
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.error ?? "Error desconocido al guardar.");
+      setNames(d);
+      setNamesSaved(true);
+    } catch (err) {
+      setNamesSaveError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setNamesSaving(false);
     }
   }
 
@@ -161,13 +244,69 @@ export default function ConfiguracionComidasPage() {
             {saved && <p style={{ color: "var(--brand-dark)", fontSize: 13 }}>Guardado.</p>}
             {saveError && <p style={{ color: "var(--error)", fontSize: 13 }}>{saveError}</p>}
           </div>
-
-          <div className="card">
-            <Link href={`/pacientes/${id}/menu-semanal`}>
-              <button className="secondary">Ir al menú semanal &rarr;</button>
-            </Link>
-          </div>
         </>
+      )}
+
+      {namesLoading && <p>Cargando nombres de las preparaciones...</p>}
+      {namesLoadError && (
+        <div className="card">
+          <p style={{ color: "var(--error)" }}>No se pudieron cargar los nombres: {namesLoadError}</p>
+        </div>
+      )}
+
+      {names && (
+        <div className="card">
+          <h3>Nombres de las preparaciones (Desayuno y Merienda)</h3>
+          <p style={{ fontSize: 13, color: "#555" }}>
+            Le ponemos un nombre a cada opción para que en el menú semanal, en vez de
+            &quot;Opción 2&quot;, aparezca algo como &quot;Infusión con leche + tostada con queso y
+            fruta&quot;. Por defecto usamos los nombres tal cual salen del Excel: cambialos por
+            algo más natural si querés. Debajo de cada uno vas a ver el desglose de
+            alimentos y cantidades, para que sepas exactamente qué estás nombrando.
+          </p>
+
+          {(["desayuno", "merienda"] as const).map((mt) => (
+            <div key={mt} style={{ marginTop: 16 }}>
+              <h4 style={{ textTransform: "capitalize", marginBottom: 8 }}>{mt}</h4>
+              {names[mt].length === 0 && (
+                <p style={{ fontSize: 13, color: "#777" }}>No hay opciones de {mt} importadas para este paciente.</p>
+              )}
+              {names[mt].map((entry) => {
+                const key = `${mt}_${entry.optionNumber}`;
+                return (
+                  <div key={key} className="field" style={{ marginBottom: 12, maxWidth: 520 }}>
+                    <label>Opción {entry.optionNumber}</label>
+                    <input
+                      type="text"
+                      value={nameEdits[key] ?? entry.autoName}
+                      onChange={(e) => {
+                        setNameEdits((prev) => ({ ...prev, [key]: e.target.value }));
+                        setNamesSaved(false);
+                      }}
+                    />
+                    <p style={{ fontSize: 12, color: "#777", margin: "4px 0 0" }}>
+                      {entry.items.map((it) => `${it.foodName} ${it.quantity} ${it.unit}`).join(" · ")}
+                    </p>
+                  </div>
+                );
+              })}
+            </div>
+          ))}
+
+          <button className="primary" disabled={namesSaving} onClick={handleSaveNames} style={{ marginTop: 8 }}>
+            {namesSaving ? "Guardando..." : "Guardar nombres"}
+          </button>
+          {namesSaved && <p style={{ color: "var(--brand-dark)", fontSize: 13 }}>Guardado.</p>}
+          {namesSaveError && <p style={{ color: "var(--error)", fontSize: 13 }}>{namesSaveError}</p>}
+        </div>
+      )}
+
+      {data && (
+        <div className="card">
+          <Link href={`/pacientes/${id}/menu-semanal`}>
+            <button className="secondary">Ir al menú semanal &rarr;</button>
+          </Link>
+        </div>
       )}
     </div>
   );

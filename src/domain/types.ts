@@ -73,6 +73,12 @@ export interface MealOption {
   computedCarbs: number;
   computedProtein: number;
   computedFat: number;
+  // Nombre del alimento congelado al momento de importar (columna
+  // food_name_snapshot en la base). Solo presente despues de confirmar la
+  // importacion (en el PlanDraft en memoria todavia no existe). Se usa para
+  // armar el nombre automatico de cada "Opcion N" sin tener que resolver
+  // el foodId contra el catalogo (que puede cambiar despues).
+  foodNameSnapshot?: string;
 }
 
 export interface MealConfig {
@@ -88,8 +94,11 @@ export interface MealConfig {
 export interface WeeklyMenuCell {
   day: number; // 1-5 o 1-7
   mealType: MealType;
-  freeText: string; // V1: texto manual
-  recipeId: string | null; // null en V1, se completa cuando exista la biblioteca
+  freeText: string; // usado hoy para Almuerzo/Cena (texto manual)
+  // Desayuno/Merienda: numero de "Opcion N" (de las importadas del Excel)
+  // elegida para ese dia. null = todavia no se eligio ninguna.
+  selectedOptionNumber: number | null;
+  recipeId: string | null; // null en V1, se completa cuando exista la biblioteca de recetas
 }
 
 export interface WeeklyMenu {
