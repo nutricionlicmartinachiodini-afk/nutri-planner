@@ -122,9 +122,15 @@ export default function FichaPacientePage() {
       <h1>Ficha del paciente</h1>
 
       {!loading && !loadError && (
-        <p>
+        <p style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
           <Link href={`/pacientes/${id}/comidas`}>
             <button className="secondary">Configurar comidas &rarr;</button>
+          </Link>
+          <Link href={`/pacientes/${id}/menu-semanal`}>
+            <button className="secondary">Menu semanal &rarr;</button>
+          </Link>
+          <Link href={`/pacientes/${id}/vista-previa`}>
+            <button className="primary">Vista previa / Exportar PDF &rarr;</button>
           </Link>
         </p>
       )}
