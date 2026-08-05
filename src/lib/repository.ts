@@ -458,16 +458,21 @@ export async function saveMealOptionLabels(patientId: string, labels: MealOption
  */
 
 export interface RecipeIngredientInput {
-  foodId: string;
-  rawQuantity: number;
+  // Ingrediente "fijo": foodId + cantidad tal cual la escribio Martina.
+  // Ingrediente "segun el plan": mealCategoryRole seteado, el resto null -
+  // se resuelve en el momento contra el Almuerzo/Cena calculado de cada
+  // paciente (ver getMealCategoryFoods). Nunca se llenan los dos a la vez.
+  foodId: string | null;
+  rawQuantity: number | null;
   cookedQuantity: number | null;
-  unit: string;
+  unit: string | null;
   notes?: string | null;
+  mealCategoryRole: string | null;
 }
 
 export interface RecipeIngredientRow extends RecipeIngredientInput {
   id: string;
-  foodName: string;
+  foodName: string | null;
 }
 
 export interface RecipeFields {
@@ -541,6 +546,7 @@ export async function getRecipe(id: string): Promise<RecipeFull | null> {
     cookedQuantity: r.cooked_quantity,
     unit: r.unit,
     notes: r.notes,
+    mealCategoryRole: r.meal_category_role,
   }));
 
   return {
@@ -566,12 +572,23 @@ async function replaceRecipeIngredients(
   await pool.query(`DELETE FROM recipe_ingredients WHERE recipe_id = $1`, [recipeId]);
   let order = 0;
   for (const ing of ingredients) {
-    const foodName = foodNameById.get(ing.foodId) ?? ing.foodId;
+    const isRole = Boolean(ing.mealCategoryRole);
+    const foodName = isRole ? null : (ing.foodId ? foodNameById.get(ing.foodId) ?? ing.foodId : null);
     await pool.query(
       `INSERT INTO recipe_ingredients
-        (id, recipe_id, food_id, food_name_snapshot, raw_quantity, cooked_quantity, unit, notes, sort_order)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-      [uuidv4(), recipeId, ing.foodId, foodName, ing.rawQuantity, ing.cookedQuantity ?? null, ing.unit, ing.notes ?? null, order]
+        (id, recipe_id, food_id, food_name_snapshot, raw_quantity, cooked_quantity, unit, notes, sort_order, meal_category_role)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+      [
+        uuidv4(), recipeId,
+        isRole ? null : ing.foodId,
+        foodName,
+        isRole ? null : ing.rawQuantity,
+        isRole ? null : ing.cookedQuantity ?? null,
+        isRole ? null : ing.unit,
+        ing.notes ?? null,
+        order,
+        ing.mealCategoryRole ?? null,
+      ]
     );
     order++;
   }
@@ -620,4 +637,41 @@ export async function updateRecipe(
 export async function deleteRecipe(id: string): Promise<void> {
   await ensureSchema();
   await getPool().query(`DELETE FROM recipes WHERE id = $1`, [id]);
+}
+
+export interface MealCategoryFoodItem {
+  foodName: string;
+  quantity: number;
+  unit: string;
+}
+
+export interface MealCategoryFoodsResponse {
+  almuerzo: Record<string, MealCategoryFoodItem[]>;
+  cena: Record<string, MealCategoryFoodItem[]>;
+}
+
+/** Agrupa el Almuerzo y la Cena YA CALCULADOS de un paciente (los que salieron
+ * de su Excel) por categoria (hidratos/proteinas/grasas/vegetales). Esto es
+ * lo que permite que una receta diga "proteinas" en vez de un alimento fijo,
+ * y que el menu semanal la resuelva con el alimento y la cantidad real de
+ * cada paciente en vez de un numero inventado o generico. */
+export async function getMealCategoryFoods(patientId: string): Promise<MealCategoryFoodsResponse> {
+  await ensureSchema();
+  const res = await getPool().query(
+    `SELECT meal_type, category, food_name_snapshot, quantity, unit
+     FROM meal_options
+     WHERE patient_id = $1 AND meal_type IN ('almuerzo', 'cena') AND category IS NOT NULL`,
+    [patientId]
+  );
+  const result: MealCategoryFoodsResponse = { almuerzo: {}, cena: {} };
+  for (const row of res.rows) {
+    const bucket = row.meal_type === "almuerzo" ? result.almuerzo : result.cena;
+    if (!bucket[row.category]) bucket[row.category] = [];
+    bucket[row.category]!.push({
+      foodName: row.food_name_snapshot,
+      quantity: row.quantity,
+      unit: row.unit,
+    });
+  }
+  return result;
 }

@@ -46,16 +46,59 @@ interface RecipeSummary {
 }
 
 interface RecipeIngredientRow {
-  foodId: string;
-  foodName: string;
-  rawQuantity: number;
-  unit: string;
+  foodId: string | null;
+  foodName: string | null;
+  rawQuantity: number | null;
+  unit: string | null;
   cookedQuantity: number | null;
+  mealCategoryRole: string | null;
 }
 
 interface RecipeFull extends RecipeSummary {
   instructions: string;
   ingredients: RecipeIngredientRow[];
+}
+
+interface MealCategoryFoodItem {
+  foodName: string;
+  quantity: number;
+  unit: string;
+}
+interface MealCategoryFoodsResponse {
+  almuerzo: Record<string, MealCategoryFoodItem[]>;
+  cena: Record<string, MealCategoryFoodItem[]>;
+}
+const MEAL_CATEGORY_ROLE_LABELS: Record<string, string> = {
+  hidratos: "Hidratos",
+  proteinas: "Proteínas",
+  grasas: "Grasas",
+  vegetales: "Vegetales",
+};
+
+/** Arma las lineas de texto que se muestran debajo del selector de receta
+ * para un dia puntual: si el ingrediente es "fijo" muestra lo que declaro
+ * la receta; si es "segun el plan" busca el alimento y la cantidad real que
+ * ese paciente tiene calculados en su Almuerzo/Cena (por categoria) y avisa
+ * si no encuentra nada en vez de inventar un numero. */
+function resolveIngredientLines(
+  ingredients: RecipeIngredientRow[],
+  patientMealCategoryFoods: Record<string, MealCategoryFoodItem[]> | undefined
+): string[] {
+  const lines: string[] = [];
+  for (const ing of ingredients) {
+    if (ing.mealCategoryRole) {
+      const roleLabel = MEAL_CATEGORY_ROLE_LABELS[ing.mealCategoryRole] ?? ing.mealCategoryRole;
+      const items = patientMealCategoryFoods?.[ing.mealCategoryRole];
+      if (items && items.length > 0) {
+        lines.push(`${roleLabel}: ${items.map((it) => `${it.foodName} ${it.quantity} ${it.unit}`).join(" + ")}`);
+      } else {
+        lines.push(`${roleLabel}: (este paciente no tiene esta categoría en su plan)`);
+      }
+    } else if (ing.foodName) {
+      lines.push(`${ing.foodName} ${ing.rawQuantity ?? ""} ${ing.unit ?? ""}`.trim());
+    }
+  }
+  return lines;
 }
 
 interface CellState {
@@ -79,6 +122,7 @@ export default function MenuSemanalPage() {
   const [names, setNames] = useState<MealOptionNamesResponse | null>(null);
   const [recipes, setRecipes] = useState<RecipeSummary[]>([]);
   const [recipeDetails, setRecipeDetails] = useState<Record<string, RecipeFull>>({});
+  const [mealCategoryFoods, setMealCategoryFoods] = useState<MealCategoryFoodsResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -104,11 +148,17 @@ export default function MenuSemanalPage() {
         if (!res.ok) throw new Error(d.error ?? "Error desconocido al leer las recetas.");
         return d.recipes as RecipeSummary[];
       }),
+      fetch(`/api/patients/${id}/meal-category-foods`).then(async (res) => {
+        const d = await res.json();
+        if (!res.ok) throw new Error(d.error ?? "Error desconocido al leer el desglose por categoria.");
+        return d as MealCategoryFoodsResponse;
+      }),
     ])
-      .then(([menuData, namesData, recipesData]) => {
+      .then(([menuData, namesData, recipesData, categoryFoodsData]) => {
         if (cancelled) return;
         setNames(namesData);
         setRecipes(recipesData);
+        setMealCategoryFoods(categoryFoodsData);
         setDaysCount(menuData.daysCount);
         const g: Grid = {};
         for (const mt of MEAL_TYPES) g[mt.key] = {};
@@ -308,6 +358,11 @@ export default function MenuSemanalPage() {
 
                       const optionsList = recipesFor(mt.recipeCategory ?? "");
                       const detail = cell.recipeId ? recipeDetails[cell.recipeId] : null;
+                      // "cena_con_hidratos" y "cena_sin_hidratos" comparten el mismo
+                      // Almuerzo/Cena calculado del paciente (una sola cena por Excel).
+                      const patientMealKey = mt.key.startsWith("cena") ? "cena" : mt.key;
+                      const patientCategoryFoods = mealCategoryFoods?.[patientMealKey as "almuerzo" | "cena"];
+                      const ingredientLines = detail ? resolveIngredientLines(detail.ingredients, patientCategoryFoods) : [];
                       return (
                         <td key={d} style={{ minWidth: 220, verticalAlign: "top" }}>
                           <select
@@ -330,7 +385,7 @@ export default function MenuSemanalPage() {
                           {detail && (
                             <p style={{ fontSize: 11, color: "#777", margin: "4px 0 0" }}>
                               {detail.prepTimeMin != null ? `${detail.prepTimeMin} min · ` : ""}
-                              {detail.ingredients.map((it) => `${it.foodName} ${it.rawQuantity} ${it.unit}`).join(" · ")}
+                              {ingredientLines.join(" · ")}
                             </p>
                           )}
                         </td>

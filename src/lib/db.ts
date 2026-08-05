@@ -186,6 +186,19 @@ export async function ensureSchema(): Promise<void> {
     ALTER TABLE weekly_menu_cells ADD COLUMN IF NOT EXISTS selected_option_number INTEGER;
   `);
 
+  // Un ingrediente de receta puede ser "fijo" (food_id + cantidad tal cual
+  // los escribio Martina) o "segun el plan" (meal_category_role: hidratos/
+  // proteinas/grasas/vegetales) - en ese caso food_id/cantidad quedan null y
+  // se resuelven en el momento contra el Almuerzo/Cena calculado de cada
+  // paciente. Por eso estas columnas necesitan poder ser null.
+  await pool.query(`
+    ALTER TABLE recipe_ingredients ADD COLUMN IF NOT EXISTS meal_category_role TEXT;
+    ALTER TABLE recipe_ingredients ALTER COLUMN food_id DROP NOT NULL;
+    ALTER TABLE recipe_ingredients ALTER COLUMN food_name_snapshot DROP NOT NULL;
+    ALTER TABLE recipe_ingredients ALTER COLUMN raw_quantity DROP NOT NULL;
+    ALTER TABLE recipe_ingredients ALTER COLUMN unit DROP NOT NULL;
+  `);
+
   // Biblioteca de recetas: independiente de cada paciente (se reutiliza entre
   // todos), a diferencia de las "Opciones" de Desayuno/Merienda que salen del
   // Excel de cada paciente. Las cantidades de los ingredientes son de

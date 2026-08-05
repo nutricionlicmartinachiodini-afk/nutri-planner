@@ -16,6 +16,15 @@ const CATEGORY_ORDER = [
   "desayuno", "merienda", "almuerzo", "cena_con_hidratos", "cena_sin_hidratos", "colacion", "preparacion_base",
 ];
 
+const MEAL_CATEGORY_ROLE_LABELS: Record<string, string> = {
+  hidratos: "Hidratos",
+  proteinas: "Proteínas",
+  grasas: "Grasas",
+  vegetales: "Vegetales",
+};
+const MEAL_CATEGORY_ROLE_ORDER = ["hidratos", "proteinas", "grasas", "vegetales"];
+const ROLE_PREFIX = "role:";
+
 interface FoodOption {
   id: string;
   name: string;
@@ -24,7 +33,9 @@ interface FoodOption {
 
 interface IngredientRow {
   key: string;
-  foodId: string;
+  // Valor del <select>: "role:proteinas" (usar lo que tenga el paciente en esa
+  // categoria) o un foodId real del catalogo (ingrediente fijo).
+  selection: string;
   rawQuantity: string;
   unit: string;
   cookedQuantity: string;
@@ -32,7 +43,10 @@ interface IngredientRow {
 }
 
 function emptyIngredient(): IngredientRow {
-  return { key: crypto.randomUUID(), foodId: "", rawQuantity: "", unit: "", cookedQuantity: "", notes: "" };
+  return { key: crypto.randomUUID(), selection: "", rawQuantity: "", unit: "", cookedQuantity: "", notes: "" };
+}
+function isRoleSelection(selection: string): boolean {
+  return selection.startsWith(ROLE_PREFIX);
 }
 
 export function RecipeForm({ recipeId }: { recipeId?: string }) {
@@ -82,13 +96,21 @@ export function RecipeForm({ recipeId }: { recipeId?: string }) {
         setTagsText((d.tags ?? []).join(", "));
         setNotes(d.notes);
         setStatus(d.status);
+        interface IngredientApiRow {
+          foodId: string | null;
+          rawQuantity: number | null;
+          unit: string | null;
+          cookedQuantity: number | null;
+          notes: string | null;
+          mealCategoryRole: string | null;
+        }
         setIngredients(
           d.ingredients.length > 0
-            ? d.ingredients.map((ing: { foodId: string; rawQuantity: number; unit: string; cookedQuantity: number | null; notes: string | null }) => ({
+            ? d.ingredients.map((ing: IngredientApiRow) => ({
                 key: crypto.randomUUID(),
-                foodId: ing.foodId,
-                rawQuantity: String(ing.rawQuantity),
-                unit: ing.unit,
+                selection: ing.mealCategoryRole ? `${ROLE_PREFIX}${ing.mealCategoryRole}` : ing.foodId ?? "",
+                rawQuantity: ing.rawQuantity != null ? String(ing.rawQuantity) : "",
+                unit: ing.unit ?? "",
                 cookedQuantity: ing.cookedQuantity != null ? String(ing.cookedQuantity) : "",
                 notes: ing.notes ?? "",
               }))
@@ -127,14 +149,28 @@ export function RecipeForm({ recipeId }: { recipeId?: string }) {
         status,
       };
       const ingredientsPayload = ingredients
-        .filter((r) => r.foodId && r.rawQuantity.trim())
-        .map((r) => ({
-          foodId: r.foodId,
-          rawQuantity: Number(r.rawQuantity),
-          unit: r.unit,
-          cookedQuantity: r.cookedQuantity.trim() ? Number(r.cookedQuantity) : null,
-          notes: r.notes.trim() || null,
-        }));
+        .filter((r) => r.selection)
+        .map((r) => {
+          if (isRoleSelection(r.selection)) {
+            return {
+              foodId: null,
+              rawQuantity: null,
+              unit: null,
+              cookedQuantity: null,
+              notes: r.notes.trim() || null,
+              mealCategoryRole: r.selection.slice(ROLE_PREFIX.length),
+            };
+          }
+          return {
+            foodId: r.selection,
+            rawQuantity: r.rawQuantity.trim() ? Number(r.rawQuantity) : null,
+            unit: r.unit,
+            cookedQuantity: r.cookedQuantity.trim() ? Number(r.cookedQuantity) : null,
+            notes: r.notes.trim() || null,
+            mealCategoryRole: null,
+          };
+        })
+        .filter((ing) => ing.mealCategoryRole || (ing.foodId && ing.rawQuantity !== null));
 
       const url = isEdit ? `/api/recipes/${recipeId}` : "/api/recipes";
       const method = isEdit ? "PUT" : "POST";
@@ -219,35 +255,57 @@ export function RecipeForm({ recipeId }: { recipeId?: string }) {
       <div className="card">
         <h3>Ingredientes</h3>
         <p style={{ fontSize: 13, color: "#555" }}>
-          Cantidades de referencia para vos, para saber qué cocinar. No son las cantidades exactas
-          de cada paciente: esas siguen saliendo del cálculo de Almuerzo/Cena del Excel de cada uno.
+          Para Almuerzo y Cena: elegí &quot;Según el plan del paciente&quot; en vez de un alimento fijo -
+          así, cuando uses esta receta con un paciente puntual, la cantidad se completa sola con lo
+          que ese paciente tiene calculado en su Excel (ej. si dice &quot;Proteínas&quot; y a ese
+          paciente le corresponden 150 g de carne, eso es lo que va a aparecer). Si elegís un
+          alimento fijo del catálogo, la cantidad que cargues acá es siempre la misma, para
+          cualquier paciente.
         </p>
-        {ingredients.map((row) => (
-          <div key={row.key} className="field-row" style={{ alignItems: "flex-end", marginBottom: 8 }}>
-            <div className="field" style={{ flex: 2 }}>
-              <label>Alimento</label>
-              <select value={row.foodId} onChange={(e) => updateIngredient(row.key, { foodId: e.target.value })}>
-                <option value="">— elegir —</option>
-                {foods.map((f) => (
-                  <option key={f.id} value={f.id}>{f.name}</option>
-                ))}
-              </select>
+        {ingredients.map((row) => {
+          const role = isRoleSelection(row.selection);
+          return (
+            <div key={row.key} className="field-row" style={{ alignItems: "flex-end", marginBottom: 8 }}>
+              <div className="field" style={{ flex: 2 }}>
+                <label>Ingrediente</label>
+                <select value={row.selection} onChange={(e) => updateIngredient(row.key, { selection: e.target.value })}>
+                  <option value="">— elegir —</option>
+                  <optgroup label="Según el plan del paciente">
+                    {MEAL_CATEGORY_ROLE_ORDER.map((r) => (
+                      <option key={r} value={`${ROLE_PREFIX}${r}`}>{MEAL_CATEGORY_ROLE_LABELS[r]}</option>
+                    ))}
+                  </optgroup>
+                  <optgroup label="Alimento fijo del catálogo">
+                    {foods.map((f) => (
+                      <option key={f.id} value={f.id}>{f.name}</option>
+                    ))}
+                  </optgroup>
+                </select>
+              </div>
+              {role ? (
+                <p style={{ fontSize: 12, color: "#777", flex: 3, margin: 0, paddingBottom: 8 }}>
+                  Se completa solo con lo que tenga cada paciente en esta categoría.
+                </p>
+              ) : (
+                <>
+                  <div className="field" style={{ flex: 1 }}>
+                    <label>Cantidad</label>
+                    <input type="number" value={row.rawQuantity} onChange={(e) => updateIngredient(row.key, { rawQuantity: e.target.value })} />
+                  </div>
+                  <div className="field" style={{ flex: 1 }}>
+                    <label>Unidad</label>
+                    <input type="text" value={row.unit} onChange={(e) => updateIngredient(row.key, { unit: e.target.value })} placeholder="gr, unidad..." />
+                  </div>
+                  <div className="field" style={{ flex: 1 }}>
+                    <label>Cant. cocida (opcional)</label>
+                    <input type="number" value={row.cookedQuantity} onChange={(e) => updateIngredient(row.key, { cookedQuantity: e.target.value })} />
+                  </div>
+                </>
+              )}
+              <button className="secondary" onClick={() => removeIngredient(row.key)} type="button">Quitar</button>
             </div>
-            <div className="field" style={{ flex: 1 }}>
-              <label>Cantidad</label>
-              <input type="number" value={row.rawQuantity} onChange={(e) => updateIngredient(row.key, { rawQuantity: e.target.value })} />
-            </div>
-            <div className="field" style={{ flex: 1 }}>
-              <label>Unidad</label>
-              <input type="text" value={row.unit} onChange={(e) => updateIngredient(row.key, { unit: e.target.value })} placeholder="gr, unidad..." />
-            </div>
-            <div className="field" style={{ flex: 1 }}>
-              <label>Cant. cocida (opcional)</label>
-              <input type="number" value={row.cookedQuantity} onChange={(e) => updateIngredient(row.key, { cookedQuantity: e.target.value })} />
-            </div>
-            <button className="secondary" onClick={() => removeIngredient(row.key)} type="button">Quitar</button>
-          </div>
-        ))}
+          );
+        })}
         <button className="secondary" onClick={addIngredient} type="button">+ Agregar ingrediente</button>
       </div>
 
