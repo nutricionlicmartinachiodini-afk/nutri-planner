@@ -127,6 +127,18 @@ export default function MenuSemanalPage() {
           };
         }
         setGrid(g);
+
+        // Precargar el detalle (ingredientes) de las recetas que ya venian
+        // elegidas de una carga anterior - si no, la celda queda mostrando
+        // "Cargando detalle..." para siempre porque el fetch solo se
+        // disparaba al cambiar la seleccion, nunca al cargar la pagina.
+        const preselectedRecipeIds = new Set<string>();
+        for (const cell of menuData.cells as { recipeId: string | null }[]) {
+          if (cell.recipeId) preselectedRecipeIds.add(cell.recipeId);
+        }
+        preselectedRecipeIds.forEach((rid) => {
+          ensureRecipeDetail(rid);
+        });
       })
       .catch((err) => !cancelled && setLoadError(err instanceof Error ? err.message : String(err)))
       .finally(() => !cancelled && setLoading(false));
