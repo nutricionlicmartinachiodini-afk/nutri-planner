@@ -186,5 +186,42 @@ export async function ensureSchema(): Promise<void> {
     ALTER TABLE weekly_menu_cells ADD COLUMN IF NOT EXISTS selected_option_number INTEGER;
   `);
 
+  // Biblioteca de recetas: independiente de cada paciente (se reutiliza entre
+  // todos), a diferencia de las "Opciones" de Desayuno/Merienda que salen del
+  // Excel de cada paciente. Las cantidades de los ingredientes son de
+  // referencia/receta - las cantidades reales del plan de cada paciente
+  // siguen saliendo del calculo de Almuerzo/Cena de su propio Excel.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS recipes (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      category TEXT NOT NULL,
+      servings INTEGER NOT NULL DEFAULT 1,
+      prep_time_min INTEGER,
+      instructions TEXT NOT NULL DEFAULT '',
+      tags JSONB NOT NULL DEFAULT '[]',
+      notes TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'activo',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_recipes_category ON recipes(category);
+
+    CREATE TABLE IF NOT EXISTS recipe_ingredients (
+      id TEXT PRIMARY KEY,
+      recipe_id TEXT NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
+      food_id TEXT NOT NULL,
+      food_name_snapshot TEXT NOT NULL,
+      raw_quantity DOUBLE PRECISION NOT NULL,
+      cooked_quantity DOUBLE PRECISION,
+      unit TEXT NOT NULL,
+      notes TEXT,
+      sort_order INTEGER NOT NULL DEFAULT 0
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_recipe_ingredients_recipe ON recipe_ingredients(recipe_id);
+  `);
+
   schemaEnsured = true;
 }

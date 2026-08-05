@@ -83,6 +83,31 @@ export async function upsertFoods(foods: Food[]): Promise<void> {
   }
 }
 
+export interface FoodSummary {
+  id: string;
+  name: string;
+  category: string;
+  baseUnit: string;
+  dataStatus: string;
+}
+
+/** Lista liviana del catalogo, para pickers (ej. elegir ingredientes de una
+ * receta). No trae los campos nutricionales - para eso esta getPatientFull /
+ * el resto del catalogo completo. */
+export async function listFoods(): Promise<FoodSummary[]> {
+  await ensureSchema();
+  const res = await getPool().query(
+    `SELECT id, name, category, base_unit, data_status FROM foods ORDER BY name ASC`
+  );
+  return res.rows.map((r) => ({
+    id: r.id,
+    name: r.name,
+    category: r.category,
+    baseUnit: r.base_unit,
+    dataStatus: r.data_status,
+  }));
+}
+
 /** Persiste una importacion confirmada: paciente + sus opciones de comida +
  * las advertencias que quedaron (para poder auditarlas despues). Devuelve el
  * id definitivo del paciente creado. */
@@ -311,7 +336,8 @@ export interface WeeklyMenuCellData {
   day: number;
   mealType: string;
   freeText: string;
-  selectedOptionNumber: number | null;
+  selectedOptionNumber: number | null; // Desayuno/Merienda: numero de "Opcion N"
+  recipeId: string | null; // Almuerzo/Cena: receta elegida de la biblioteca
 }
 
 export interface WeeklyMenuData {
@@ -325,7 +351,7 @@ export async function getWeeklyMenu(patientId: string): Promise<WeeklyMenuData> 
   const headerRes = await pool.query(`SELECT days_count FROM weekly_menus WHERE patient_id = $1`, [patientId]);
   const daysCount = (headerRes.rows[0]?.days_count as 5 | 7 | undefined) ?? 5;
   const cellsRes = await pool.query(
-    `SELECT day, meal_type, free_text, selected_option_number FROM weekly_menu_cells WHERE patient_id = $1`,
+    `SELECT day, meal_type, free_text, selected_option_number, recipe_id FROM weekly_menu_cells WHERE patient_id = $1`,
     [patientId]
   );
   const cells: WeeklyMenuCellData[] = cellsRes.rows.map((r) => ({
@@ -333,6 +359,7 @@ export async function getWeeklyMenu(patientId: string): Promise<WeeklyMenuData> 
     mealType: r.meal_type,
     freeText: r.free_text,
     selectedOptionNumber: r.selected_option_number,
+    recipeId: r.recipe_id,
   }));
   return { daysCount, cells };
 }
@@ -352,11 +379,12 @@ export async function saveWeeklyMenu(patientId: string, data: WeeklyMenuData): P
     for (const cell of data.cells) {
       const hasFreeText = cell.freeText && cell.freeText.trim();
       const hasOption = cell.selectedOptionNumber !== null && cell.selectedOptionNumber !== undefined;
-      if (!hasFreeText && !hasOption) continue;
+      const hasRecipe = cell.recipeId !== null && cell.recipeId !== undefined;
+      if (!hasFreeText && !hasOption && !hasRecipe) continue;
       await client.query(
-        `INSERT INTO weekly_menu_cells (id, patient_id, day, meal_type, free_text, selected_option_number)
-         VALUES ($1,$2,$3,$4,$5,$6)`,
-        [uuidv4(), patientId, cell.day, cell.mealType, cell.freeText ?? "", cell.selectedOptionNumber ?? null]
+        `INSERT INTO weekly_menu_cells (id, patient_id, day, meal_type, free_text, selected_option_number, recipe_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+        [uuidv4(), patientId, cell.day, cell.mealType, cell.freeText ?? "", cell.selectedOptionNumber ?? null, cell.recipeId ?? null]
       );
     }
     await client.query("COMMIT");
@@ -417,4 +445,179 @@ export async function saveMealOptionLabels(patientId: string, labels: MealOption
   } finally {
     client.release();
   }
+}
+
+/**
+ * Biblioteca de recetas. A diferencia de las "Opciones" de Desayuno/Merienda
+ * (que salen calculadas del Excel de cada paciente), una receta es global:
+ * se carga una vez y se reutiliza en el menu semanal de cualquier paciente.
+ * Los ingredientes que declara son de referencia/receta (para que Martina
+ * sepa que cocinar) - las cantidades reales que le corresponden a cada
+ * paciente siguen saliendo del calculo de Almuerzo/Cena de su propio Excel,
+ * nunca de aca. Esto se aclara tambien en la UI para que no se confunda.
+ */
+
+export interface RecipeIngredientInput {
+  foodId: string;
+  rawQuantity: number;
+  cookedQuantity: number | null;
+  unit: string;
+  notes?: string | null;
+}
+
+export interface RecipeIngredientRow extends RecipeIngredientInput {
+  id: string;
+  foodName: string;
+}
+
+export interface RecipeFields {
+  name: string;
+  category: string;
+  servings: number;
+  prepTimeMin: number | null;
+  instructions: string;
+  tags: string[];
+  notes: string;
+  status: "activo" | "archivado";
+}
+
+export interface RecipeSummary {
+  id: string;
+  name: string;
+  category: string;
+  status: string;
+  servings: number;
+  prepTimeMin: number | null;
+}
+
+export interface RecipeFull extends RecipeFields {
+  id: string;
+  ingredients: RecipeIngredientRow[];
+}
+
+export async function listRecipes(filter?: { category?: string; status?: string }): Promise<RecipeSummary[]> {
+  await ensureSchema();
+  const conditions: string[] = [];
+  const params: unknown[] = [];
+  if (filter?.category) {
+    params.push(filter.category);
+    conditions.push(`category = $${params.length}`);
+  }
+  if (filter?.status) {
+    params.push(filter.status);
+    conditions.push(`status = $${params.length}`);
+  }
+  const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+  const res = await getPool().query(
+    `SELECT id, name, category, status, servings, prep_time_min FROM recipes ${where} ORDER BY name ASC`,
+    params
+  );
+  return res.rows.map((r) => ({
+    id: r.id,
+    name: r.name,
+    category: r.category,
+    status: r.status,
+    servings: r.servings,
+    prepTimeMin: r.prep_time_min,
+  }));
+}
+
+export async function getRecipe(id: string): Promise<RecipeFull | null> {
+  await ensureSchema();
+  const pool = getPool();
+  const res = await pool.query(`SELECT * FROM recipes WHERE id = $1`, [id]);
+  const row = res.rows[0];
+  if (!row) return null;
+
+  const ingRes = await pool.query(
+    `SELECT * FROM recipe_ingredients WHERE recipe_id = $1 ORDER BY sort_order ASC`,
+    [id]
+  );
+  const ingredients: RecipeIngredientRow[] = ingRes.rows.map((r) => ({
+    id: r.id,
+    foodId: r.food_id,
+    foodName: r.food_name_snapshot,
+    rawQuantity: r.raw_quantity,
+    cookedQuantity: r.cooked_quantity,
+    unit: r.unit,
+    notes: r.notes,
+  }));
+
+  return {
+    id: row.id,
+    name: row.name,
+    category: row.category,
+    servings: row.servings,
+    prepTimeMin: row.prep_time_min,
+    instructions: row.instructions,
+    tags: row.tags ?? [],
+    notes: row.notes,
+    status: row.status,
+    ingredients,
+  };
+}
+
+async function replaceRecipeIngredients(
+  recipeId: string,
+  ingredients: RecipeIngredientInput[],
+  foodNameById: Map<string, string>
+): Promise<void> {
+  const pool = getPool();
+  await pool.query(`DELETE FROM recipe_ingredients WHERE recipe_id = $1`, [recipeId]);
+  let order = 0;
+  for (const ing of ingredients) {
+    const foodName = foodNameById.get(ing.foodId) ?? ing.foodId;
+    await pool.query(
+      `INSERT INTO recipe_ingredients
+        (id, recipe_id, food_id, food_name_snapshot, raw_quantity, cooked_quantity, unit, notes, sort_order)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+      [uuidv4(), recipeId, ing.foodId, foodName, ing.rawQuantity, ing.cookedQuantity ?? null, ing.unit, ing.notes ?? null, order]
+    );
+    order++;
+  }
+}
+
+export async function createRecipe(fields: RecipeFields, ingredients: RecipeIngredientInput[]): Promise<string> {
+  await ensureSchema();
+  const pool = getPool();
+  const id = uuidv4();
+  const foods = await listFoods();
+  const foodNameById = new Map(foods.map((f) => [f.id, f.name]));
+  await pool.query(
+    `INSERT INTO recipes (id, name, category, servings, prep_time_min, instructions, tags, notes, status, updated_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9, now())`,
+    [
+      id, fields.name, fields.category, fields.servings, fields.prepTimeMin,
+      fields.instructions, JSON.stringify(fields.tags), fields.notes, fields.status,
+    ]
+  );
+  await replaceRecipeIngredients(id, ingredients, foodNameById);
+  return id;
+}
+
+export async function updateRecipe(
+  id: string,
+  fields: RecipeFields,
+  ingredients: RecipeIngredientInput[]
+): Promise<void> {
+  await ensureSchema();
+  const pool = getPool();
+  const foods = await listFoods();
+  const foodNameById = new Map(foods.map((f) => [f.id, f.name]));
+  await pool.query(
+    `UPDATE recipes SET
+      name = $2, category = $3, servings = $4, prep_time_min = $5, instructions = $6,
+      tags = $7, notes = $8, status = $9, updated_at = now()
+     WHERE id = $1`,
+    [
+      id, fields.name, fields.category, fields.servings, fields.prepTimeMin,
+      fields.instructions, JSON.stringify(fields.tags), fields.notes, fields.status,
+    ]
+  );
+  await replaceRecipeIngredients(id, ingredients, foodNameById);
+}
+
+export async function deleteRecipe(id: string): Promise<void> {
+  await ensureSchema();
+  await getPool().query(`DELETE FROM recipes WHERE id = $1`, [id]);
 }

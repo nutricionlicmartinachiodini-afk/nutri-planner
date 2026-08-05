@@ -20,8 +20,15 @@ export default function HomePage() {
         </Link>
       </div>
       <div className="card">
+        <h2>Recetas</h2>
+        <p>Biblioteca de recetas reutilizable entre pacientes, para Almuerzo y Cena.</p>
+        <Link href="/recetas">
+          <button className="secondary">Ver recetas</button>
+        </Link>
+      </div>
+      <div className="card">
         <h3>Todavia no implementado en esta version</h3>
-        <p>Configuracion de comidas, menu semanal, vista previa y exportacion a PDF. Ver README.md.</p>
+        <p>Vista previa y exportacion a PDF. Ver README.md.</p>
       </div>
     </div>
   );
